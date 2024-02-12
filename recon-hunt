@@ -1,0 +1,181 @@
+#!/bin/bash
+
+banner(){
+
+printf "\033[31m"  # red foreground color
+
+cat << EOF
+                                ╔══════╗╔══════╗╔═╗╔══╗╔═╗╔══╗╔═╗╔══════╗
+                                ║     ║║     ║║║║║╔╝║║║║║╔╝║║║║     ║
+                                ╚══════╝╚══════╝║║║║╚╝║║║║║╚╝║║║║══════╝
+                                ╔══════╗╔══════╗║║║║╔╗║║║║╔╗║║║║     ║
+                                ║     ║║     ║╚═╝╚╝╝╚═╝╚╝╝╚═╝╚═╝║══════╝
+                                ╚══════╝╚══════╝                        
+                                    ________   _________    _ _       _ _
+                                   |______  | |  ______/    |  \      | |
+                                _________ | | | |  _______  | | \     | |  
+                               |  ______/ | | | | ||     || | |  \    | |
+                               | |  |=======| | | ||     || | |   \   | |
+                               | |        | | | | ||_____|| | |    \  | |
+                               | |  ______| | | |_______    | |     \ | |              
+                               |_| |________| |________/    |_|      \ _|
+                               
+
+                                RECON-Hunt
+EOF
+
+printf "\033[0m"  # reset color to default
+
+}  
+                                                                 
+# url_flag=$1
+domain=$1
+# option=$3
+RED="\033[1;31m"
+RESET="\033[0m"
+path=$(pwd)
+
+subdomain_path=$path/$domain/subdomains
+screenshots_path=$path/$domain/screenshots
+scans_path=$path/$domain/scans
+content_Discovery=$path/content_discovery
+final_subdomains=$subdomain_path/alive_subdomains
+
+
+
+
+# if [ ! -d "$screenshots_path" ];then
+#     mkdir $screenshots_path
+# fi
+
+
+help_menu(){
+    echo -e """ ${RED}
+        Usage: recon-hunt -u <url> flags
+        -h, help
+        -u, url
+       --sub, subdomain enumuration
+        -c, content discovery
+        -s, scan tools: nmap, nuclei
+        -a, all
+        ${RESET}
+    """
+
+}
+
+subdomain_enum() {
+
+    if [ ! -d "$domain" ];then
+    mkdir $domain
+    fi
+
+    if [ ! -d "$subdomain_path" ];then
+    mkdir $subdomain_path
+    fi
+
+    echo -e "${RED} [+] Launching Subfinder ......${RESET}"
+    subfinder -d $domain -o $subdomain_path/found
+
+    echo -e "${RED} [+] Launching assetfinder ......${RESET}"
+    assetfinder $domain -only-subs >>$subdomain_path/found
+    echo -e "${RED} [+]  Completed ......${RESET}"
+
+    echo -e "${RED} [+] Launching HTTPX ......${RESET}"
+    cat $subdomain_path/found | grep $domain | sort -u | httpx -mc 200,301,302,303,300,304 -o $subdomain_path/httpx_200_300s
+    cat $subdomain_path/httpx_200_300s | sort -u | sed -s 's|https://||'  | tee -a $subdomain_path/alive_subdomains
+    cat $subdomain_path/found | grep $domain | sort -u | httpx -mc 400,401,402,403,405,404 -o $subdomain_path/httpx_400s
+    cat $subdomain_path/httpx_400s | sort -u | sed -s 's|https://||' | tee -a $subdomain_path/400s_subdomain
+    rm -rf $subdomain_path/found $subdomain_path/httpx_200
+
+    # echo -e "${RED} [+] Launching Gowitness ......${RESET}"
+    # gowitness file -f $subdomain_path/alive_subdomains -P $screenshots_path/ --no-http
+
+}
+
+content_discovery(){
+
+    if [ ! -d "$domain" ];then
+    mkdir $domain
+    fi
+
+    if [ ! -d "$content_Discovery" ];then
+    mkdir $content_Discovery
+    fi
+
+    while IFS= read -r line; do
+
+        echo -e "${RED} [+] Launching katana ......${RESET}"
+        katana -u $line -o $content_Discovery/${line}_katana 
+
+        echo -e "${RED} [+] Launching Waybackurls ......${RESET}"
+        echo $line | waybackurls -no-subs | grep $line | sort -u >> $content_Discovery/${line}_waybackurls
+
+        cat $content_Discovery/${line}_katana $content_Discovery/${line}_waybackurls | grep $line | sort -u | sed -s 's|https://||' | tee -a $content_Discovery/${line}1.txt
+        rm -rf $content_Discovery/${line}_waybackurls $content_Discovery/${line}_katana
+
+        echo -e "${RED} [+] Launching Paramspider ......${RESET}"
+        paramspider -d $line 
+        paramspider_results=$path/results/${line}.txt
+        cat $paramspider_results | grep $line | sort -u | sed -s 's|https://||' >> $content_Discovery/${line}1.txt
+        cat $content_Discovery/${line}1.txt | sort -u >>$content_Discovery/${line}.txt
+        # rm -rf $path/results $content_Discovery/${line}1.txt
+    done < $final_subdomains
+
+}
+
+active_scan(){
+
+    if [ ! -d "$scans_path" ];then
+        mkdir $scans_path
+    fi
+
+    if [ ! -d "$scans_path/nmap" ];then
+        mkdir $scans_path/nmap
+    fi
+
+    if [ ! -d "$scans_path/nuclei" ];then
+        mkdir $scans_path/nuclei
+    fi
+
+    #nmap scan
+    while IFS= read -r line; do
+        echo -e "${RED} [+] Launching nmap ......${RESET}"
+        nmap -F -Pn -sV $line -oN $scans_path/nmap/$line
+    done < $final_subdomains
+
+    #nuclei scan
+    while IFS= read -r line; do
+        echo -e "${RED} [+] Launching nuclei ......${RESET}"
+        nuclei -target $line -o $scans_path/nuclei/$line
+    done < $final_subdomains
+
+}
+
+banner   #function calling
+subdomain_enum
+content_discovery
+active_scan
+
+
+# case $option in
+#     "-h")
+#         help_menu
+#         ;;
+#     "--sub")
+#         subdomain_enum
+#         ;;
+#     "-c")
+#         content_discovery
+#         ;;
+#     "-s")
+#         active_scan
+#         ;;
+#     "-a")
+#         subdomain_enum
+#         active_scan
+#         content_discovery
+#         ;;
+#     *)
+#         exit
+# esac
+# done
